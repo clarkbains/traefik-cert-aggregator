@@ -20,12 +20,12 @@ type Client interface {
 
 type ImportClient interface {
 	Client
-	Start(context.Context) error
+	Start(*context.Context) error
 }
 
 type ExportClient interface {
 	Client
-	Start(context.Context, chan aggregator.CertStoreChange) error
+	Start(*context.Context, chan aggregator.CertStoreChange) error
 }
 
 var registeredImportClients []ImportClient
@@ -39,7 +39,7 @@ func toClientSlice[T Client](slice []T) []Client {
 	return ret
 }
 
-func StartClients(ctx context.Context, cfg *config.Config) error {
+func StartClients(ctx *context.Context, cfg *config.Config) error {
 	wg := sync.WaitGroup{}
 
 	ic := toClientSlice(registeredImportClients)
@@ -52,13 +52,14 @@ func StartClients(ctx context.Context, cfg *config.Config) error {
 		return errors.New("no client configured for running")
 	}
 	wg.Add(2)
+
 	go func() {
-		runImportClients(ctx, importers)
+		runExportClients(ctx, exporters)
 		wg.Done()
 	}()
 
 	go func() {
-		runExportClients(ctx, exporters)
+		runImportClients(ctx, importers)
 		wg.Done()
 	}()
 
@@ -87,8 +88,8 @@ func configureClients[T Client](cfg *config.KeyedKVMap, clientWhitelist []string
 	}
 
 	for _, client := range *clientMap {
-		name :=  client.GetInfo().Name 
-		if !allowed.Contains(strings.ToLower(client.GetInfo().Name) ) {
+		name := client.GetInfo().Name
+		if !allowed.Contains(strings.ToLower(client.GetInfo().Name)) {
 			log.Printf("Client \"%s\" not whitelisted", name)
 			continue
 		}
@@ -103,45 +104,47 @@ func configureClients[T Client](cfg *config.KeyedKVMap, clientWhitelist []string
 	return configured
 }
 
-func runImportClients(ctx context.Context, clientSet []ImportClient) {
+func runImportClients(ctx *context.Context, clientSet []ImportClient) {
 	wg := sync.WaitGroup{}
 	for _, client := range clientSet {
 		wg.Add(1)
-		go func() {
+		go func(clnt ImportClient, ctx context.Context) {
 		runLoop:
 			for {
-				err := client.Start(ctx)
+				log.Printf("Import client \"%s\" started", clnt.GetInfo().Name)
+
+				err := clnt.Start(&ctx)
 				select {
 				case <-time.After(time.Second):
-					log.Printf("Import client \"%s\" terminated with the following error. Restarting. %s", client.GetInfo().Name, err)
-				case <-ctx.Done():
+					log.Printf("Import client \"%s\" terminated with the following error. Restarting. %s", clnt.GetInfo().Name, err)
+				case <-(ctx).Done():
 					break runLoop
 				}
 			}
 			wg.Done()
-		}()
+		}(client, *ctx)
 	}
 	wg.Wait()
 }
 
-func runExportClients(ctx context.Context, clientSet []ExportClient) {
+func runExportClients(ctx *context.Context, clientSet []ExportClient) {
 	wg := sync.WaitGroup{}
 	for _, client := range clientSet {
 		wg.Add(1)
-		go func() {
+		go func(clnt ExportClient) {
 
 		runLoop:
 			for {
-				err := client.Start(ctx, aggregator.NewOutputChan())
+				err := clnt.Start(ctx, aggregator.NewOutputChan())
 				select {
 				case <-time.After(time.Second):
-					log.Printf("Export client \"%s\" terminated with the following error. Restarting. %s", client.GetInfo().Name, err)
-				case <-ctx.Done():
+					log.Printf("Export client \"%s\" terminated with the following error. Restarting. %s", clnt.GetInfo().Name, err)
+				case <-(*ctx).Done():
 					break runLoop
 				}
 			}
 			wg.Done()
-		}()
+		}(client)
 	}
 	wg.Wait()
 }

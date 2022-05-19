@@ -8,4 +8,5 @@ import (
 func AddAllClients(cfg config.Config) {
 	//Configuration is provided here.
 	clients.AddExportClient(NewStdoutExportClient())
+	clients.AddExportClient(NewTraefikExportClient())
 }

@@ -17,7 +17,7 @@ func NewStdoutExportClient() *StdoutExportClient {
 	return &v
 }
 
-func (v *StdoutExportClient) Start(ctx context.Context, ch chan aggregator.CertStoreChange) error {
+func (v *StdoutExportClient) Start(ctx *context.Context, ch chan aggregator.CertStoreChange) error {
 	for {
 		var cd aggregator.CertStoreChange
 		var prefix = ""
@@ -27,7 +27,7 @@ func (v *StdoutExportClient) Start(ctx context.Context, ch chan aggregator.CertS
 		select {
 		case cd = <-ch:
 			log.Printf("%sGot %d additions, %d removals from store \"%s\"", prefix, len(cd.CertDiff.Added), len(cd.CertDiff.Removed), cd.Sender)
-		case <-ctx.Done():
+		case <-(*ctx).Done():
 			return errors.New("context cancelled")
 		}
 	}

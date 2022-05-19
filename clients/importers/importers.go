@@ -7,4 +7,5 @@ import (
 
 func AddAllClients(cfg config.Config) {
 	clients.AddImportClient(NewMockClient())
+	clients.AddImportClient(NewVaultClient())
 }

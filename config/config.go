@@ -5,10 +5,10 @@ import (
 )
 
 type Config struct {
-	EnabledImporters []string
-	EnabledExporters []string
-	ImporterConfig   KeyedKVMap
-	ExporterConfig   KeyedKVMap
+	EnabledImporters []string `env:"ENABLED_IMPORTERS"`
+	EnabledExporters []string `env:"ENABLED_EXPORTERS"`
+	ImporterConfig   KeyedKVMap `env:"IMPORTER_CONFIG"`
+	ExporterConfig   KeyedKVMap `env:"EXPORTER_CONFIG"`
 }
 
 type KeyedKVMap map[string](clientConfig.ClientConfiguration)
