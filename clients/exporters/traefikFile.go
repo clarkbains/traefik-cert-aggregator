@@ -32,6 +32,7 @@ type TraefikCertificateConfig struct {
 type TraefikExportClient struct {
 	config        config.ClientConfiguration
 	traefikConfig TraefikConfig
+	basePath string
 }
 
 func NewTraefikExportClient() *TraefikExportClient {
@@ -40,14 +41,13 @@ func NewTraefikExportClient() *TraefikExportClient {
 }
 
 func (v *TraefikExportClient) Start(ctx *context.Context, ch chan aggregator.CertStoreChange) error {
-	basePath := path.Clean(v.config.Get("baseLocation", os.TempDir()))
 
 	for {
 		var cd aggregator.CertStoreChange
 		select {
 		case cd = <-ch:
 			for _, elem := range cd.CertDiff.Added {
-				newPath := path.Join(basePath, cd.Sender, elem.Cert.SerialNumber.String())
+				newPath := path.Join(v.basePath, cd.Sender, elem.Cert.SerialNumber.String())
 				os.MkdirAll(newPath, 0711)
 				keyPath := path.Join(newPath, "key.pem")
 				log.Printf("Writing key and cert to %s (%s)", newPath, elem.Cert.Subject.CommonName)
@@ -63,7 +63,7 @@ func (v *TraefikExportClient) Start(ctx *context.Context, ch chan aggregator.Cer
 			}
 
 			for _, elem := range cd.CertDiff.Removed {
-				newPath := path.Join(basePath, cd.Sender, elem.Cert.SerialNumber.String())
+				newPath := path.Join(v.basePath, cd.Sender, elem.Cert.SerialNumber.String())
 				err := os.RemoveAll(newPath)
 				if err != nil {
 					log.Printf("Could not remove stale certificate: %s", err)
@@ -73,7 +73,7 @@ func (v *TraefikExportClient) Start(ctx *context.Context, ch chan aggregator.Cer
 
 			v.traefikConfig.Tls.Certificates = v.traefikConfig.Tls.Certificates[0:]
 
-			importerFileinfo, err := ioutil.ReadDir(basePath)
+			importerFileinfo, err := ioutil.ReadDir(v.basePath)
 			if err != nil {
 				log.Printf("could not list directory to generate config: %s", err)
 				continue
@@ -84,7 +84,7 @@ func (v *TraefikExportClient) Start(ctx *context.Context, ch chan aggregator.Cer
 					continue
 				}
 				
-				importerPath := path.Join(basePath, importerDir.Name())
+				importerPath := path.Join(v.basePath, importerDir.Name())
 				fileinfo, err := ioutil.ReadDir(importerPath)
 
 				if err != nil {
@@ -114,7 +114,7 @@ func (v *TraefikExportClient) Start(ctx *context.Context, ch chan aggregator.Cer
 				}
 			}
 
-			traefikConfigFilePath := path.Join(basePath, "traefik.yaml")
+			traefikConfigFilePath := path.Join(v.basePath, "traefik.yaml")
 			traefikCfgBytes, err := yaml.Marshal(v.traefikConfig)
 			if err != nil {
 				log.Printf("Could not create traefik config: %s", err)
@@ -129,6 +129,13 @@ func (v *TraefikExportClient) Start(ctx *context.Context, ch chan aggregator.Cer
 
 func (v *TraefikExportClient) Configure(cc config.ClientConfiguration) error {
 	v.config = cc
+	v.basePath = path.Clean(v.config.Get("baseLocation", os.TempDir()))
+	emptyCfg := TraefikConfig{}
+	empytCfgBytes, err := yaml.Marshal(emptyCfg)
+	if (err != nil){
+		return err
+	}
+	ioutil.WriteFile(path.Join(v.basePath, "traefik.yaml"), empytCfgBytes, 0600)
 	return nil
 }
 
