@@ -2,12 +2,14 @@ package importers
 
 import (
 	"context"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 	"traefik-cert-aggregator/aggregator"
 	"traefik-cert-aggregator/clients/config"
@@ -21,11 +23,18 @@ type VaultClient struct {
 	vault   *api.Client
 }
 
+type TLSEntry struct {
+	PrivateKey *rsa.PrivateKey
+	Chain []*x509.Certificate
+}
+
 func NewVaultClient() *VaultClient {
 	v := VaultClient{}
 	v.manager = aggregator.NewCertManager(v.GetInfo().Name)
 	return &v
 }
+
+
 
 func (v *VaultClient) Start(ctx *context.Context) error {
 runLoop:
@@ -40,8 +49,11 @@ runLoop:
 			return errors.New("could not list keys")
 		}
 
-	vaultKeys:
-		for _, vaultKey := range allVaultKeys.([]interface{}) {
+		var wg sync.WaitGroup
+		domainData := allVaultKeys.([]interface{}) 
+		parsedChan := make(chan TLSEntry, len(domainData))
+		
+		for _, vaultKey := range domainData {
 
 			certSecret, err := v.vault.Logical().ReadWithContext(*ctx, "kv/data/infrastructure/le-certs/"+vaultKey.(string))
 			if err != nil {
@@ -52,7 +64,6 @@ runLoop:
 				//	log.Printf("unable to get cert data for %s", vaultKey)
 				continue
 			}
-
 			kvDataInterfaceMap := rawKVData.(map[string]interface{})
 
 			foundKey, okm := kvDataInterfaceMap["key"].(string)
@@ -62,29 +73,21 @@ runLoop:
 				continue
 			}
 
-			var der, rest = pem.Decode([]byte(foundCertChain))
-			var fullChain []*x509.Certificate
-			for der != nil {
-				singleCert, err := x509.ParseCertificate(der.Bytes)
-				if err != nil {
-					continue vaultKeys
-				}
-				fullChain = append(fullChain, singleCert)
-				der, rest = pem.Decode(rest)
-			}
-
-			pemBlock, _ := pem.Decode([]byte(foundKey))
-			parsedKey, err := x509.ParsePKCS1PrivateKey(pemBlock.Bytes)
-			if err != nil {
-				log.Printf("Could not parse private key for %s, because %s", vaultKey, err)
-				continue
-			}
-			added := v.manager.AddCert(fullChain[0], fullChain, parsedKey)
-			if added {
-				log.Printf("vault: New cert for %s", vaultKey)
-			}
-
+			wg.Add(1)
+			go func () {
+				asyncParse(parsedChan, vaultKey.(string), foundKey, foundCertChain)
+				wg.Done()
+			} ()
+			
 		}
+		wg.Done()
+		for entry := range parsedChan {
+			added := v.manager.AddCert(entry.Chain[0], entry.Chain, entry.PrivateKey)
+			if added {
+				log.Printf("vault: New cert for %s", entry.Chain[0].Subject.CommonName)
+			}
+		}
+
 		v.manager.DeleteUntouchedCerts()
 		v.manager.EndChanges()
 		select {
@@ -128,4 +131,26 @@ func (v *VaultClient) GetInfo() config.ClientInfo {
 			"baz":   "foo",
 		},
 	}
+}
+
+func asyncParse(results chan TLSEntry, domain string, key string, chain string ) {
+	var der, rest = pem.Decode([]byte(chain))
+	var fullChain []*x509.Certificate
+	for der != nil {
+		singleCert, err := x509.ParseCertificate(der.Bytes)
+		if err != nil {
+			return
+		}
+		fullChain = append(fullChain, singleCert)
+		der, rest = pem.Decode(rest)
+	}
+
+	pemBlock, _ := pem.Decode([]byte(chain))
+	parsedKey, err := x509.ParsePKCS1PrivateKey(pemBlock.Bytes)
+	if err != nil {
+		log.Printf("Could not parse private key for %s, because %s", domain, err)
+		return
+	}
+	te := TLSEntry{PrivateKey: parsedKey, Chain: fullChain}
+	results <- te
 }
