@@ -145,7 +145,7 @@ func asyncParse(results chan TLSEntry, domain string, key string, chain string )
 		der, rest = pem.Decode(rest)
 	}
 
-	pemBlock, _ := pem.Decode([]byte(chain))
+	pemBlock, _ := pem.Decode([]byte(key))
 	parsedKey, err := x509.ParsePKCS1PrivateKey(pemBlock.Bytes)
 	if err != nil {
 		log.Printf("Could not parse private key for %s, because %s", domain, err)
