@@ -51,36 +51,36 @@ runLoop:
 
 		var wg sync.WaitGroup
 		domainData := allVaultKeys.([]interface{}) 
-		parsedChan := make(chan TLSEntry, len(domainData))
+		parsedChan := make(chan TLSEntry, len(domainData)+1)
 		
-		for _, vaultKey := range domainData {
-
-			certSecret, err := v.vault.Logical().ReadWithContext(*ctx, "kv/data/infrastructure/le-certs/"+vaultKey.(string))
-			if err != nil {
-				return err
-			}
-			rawKVData, ok := certSecret.Data["data"]
-			if !ok || rawKVData == nil {
-				//	log.Printf("unable to get cert data for %s", vaultKey)
-				continue
-			}
-			kvDataInterfaceMap := rawKVData.(map[string]interface{})
-
-			foundKey, okm := kvDataInterfaceMap["key"].(string)
-			foundCertChain, okk := kvDataInterfaceMap["cert"].(string)
-			if !okm || !okk {
-				log.Printf("unable to get data for %s", vaultKey)
-				continue
-			}
-
+		for _, vaultKeyBasename := range domainData {
 			wg.Add(1)
-			go func () {
-				asyncParse(parsedChan, vaultKey.(string), foundKey, foundCertChain)
+			go func (vaultKey string) {
+				certSecret, err := v.vault.Logical().ReadWithContext(*ctx, "kv/data/infrastructure/le-certs/"+vaultKey)
+				if err != nil {
+					return
+				}
+
+				rawKVData, ok := certSecret.Data["data"]
+				if !ok || rawKVData == nil {
+					return
+				}
+				kvDataInterfaceMap := rawKVData.(map[string]interface{})
+	
+				foundKey, okm := kvDataInterfaceMap["key"].(string)
+				foundCertChain, okk := kvDataInterfaceMap["cert"].(string)
+				if !okm || !okk {
+					log.Printf("unable to get data for %s", vaultKey)
+					return
+				}
+
+				asyncParse(parsedChan, vaultKey, foundKey, foundCertChain)
 				wg.Done()
-			} ()
-			
+			} (vaultKeyBasename.(string))
 		}
-		wg.Done()
+		
+		wg.Wait()
+		close(parsedChan)
 		for entry := range parsedChan {
 			added := v.manager.AddCert(entry.Chain[0], entry.Chain, entry.PrivateKey)
 			if added {
